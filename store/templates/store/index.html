@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fabric POS</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { background-color: #e8f5e9; padding: 20px; }
+    .pos-container { display: grid; grid-template-columns: 1fr 2fr; gap: 20px; }
+    .cart, .product-table {
+      background: #fff; padding: 20px; border-radius: 10px; height: 90vh; overflow-y: auto;
+    }
+    .product-table .table th, .product-table .table td {
+      vertical-align: middle;
+    }
+    .low-stock { background-color: #fff3cd; } /* Highlight low stock */
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="text-center mb-4">
+      <h1>🧵 Dolat Store</h1>
+      <p class="text-muted">Manage and sell fabrics with ease</p>
+    </div>
+
+    <!-- POS Section -->
+    <div class="pos-container">
+      <!-- Cart -->
+      <div class="cart">
+        <h4>🛒 Cart</h4>
+        <ul id="cart-items" class="list-group mb-3"></ul>
+        <hr>
+        <strong>Total: ₦<span id="cart-total">0</span></strong>
+        {% if user.is_authenticated %}
+        <button class="btn btn-success mt-3" onclick="checkout()">Checkout</button>
+        {% else %}
+        <p class="text-muted mt-3">Please <a href="{% url 'login' %}">log in</a> to checkout.</p>
+        {% endif %}
+      </div>
+
+      <!-- Products -->
+      <div class="product-table">
+        <h4>🧾 Product List</h4>
+        <div class="mb-3">
+          <input type="text" id="searchInput" class="form-control" placeholder="Search by fabric name..." onkeyup="searchProducts()">
+        </div>
+        <table class="table table-bordered table-sm" id="product-table">
+          <thead>
+            <tr>
+              <th>Fabric</th>
+              <th>Retail (₦)</th>
+              <th>Wholesale (₦)</th>
+              <th>Price Type</th>
+              <th>Qty</th>
+              <th>Stock</th>
+              <th>Add</th>
+            </tr>
+          </thead>
+          <tbody id="product-body">
+            {% for product in products %}
+            <tr {% if product.stock < 10 %}class="low-stock"{% endif %}>
+              <td>{{ product.name }}</td>
+              <td>{{ product.retail_price }}</td>
+              <td>{{ product.wholesale_price }}</td>
+              <td>
+                <select class="price-type form-control form-control-sm" onchange="updatePrice(this, '{{ product.id }}')">
+                  <option value="retail" selected>Retail</option>
+                  <option value="wholesale">Wholesale</option>
+                </select>
+              </td>
+              <td><input type="number" min="1" class="form-control form-control-sm qty" value="1"></td>
+              <td>{{ product.stock }}</td>
+              <td>
+                <button class="btn btn-primary btn-sm" onclick="addToCart('{{ product.id }}', '{{ product.name }}', {{ product.retail_price }}, {{ product.wholesale_price }})">
+                  +
+                </button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% if user.is_authenticated %}
+        <button class="btn btn-info mt-3" onclick="window.location.href='{% url 'store:export_products' %}'">📥 Export to Excel</button>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Manage Stock Modal -->
+    {% if user.is_authenticated %}
+    <button class="btn btn-warning position-fixed bottom-0 end-0 m-4" data-bs-toggle="modal" data-bs-target="#stockModal">
+      🧰 Manage Stock
+    </button>
+
+    <div class="modal fade" id="stockModal" tabindex="-1" aria-labelledby="stockModalLabel" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="stockModalLabel">Manage Product Stock</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <form id="stockForm">
+              <label>Product Name</label>
+              <input type="text" name="name" class="form-control" required>
+
+              <label class="mt-2">Retail Price (₦)</label>
+              <input type="number" name="retail_price" class="form-control" step="0.01" required>
+
+              <label class="mt-2">Wholesale Price (₦)</label>
+              <input type="number" name="wholesale_price" class="form-control" step="0.01" required>
+
+              <label class="mt-2">Quantity to Add</label>
+              <input type="number" name="stock" class="form-control" min="1" required>
+            </form>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            <button type="button" class="btn btn-success" onclick="saveStock()">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <a href="{% url 'login' %}" class="btn btn-warning position-fixed bottom-0 end-0 m-4">
+      🧰 Log in to Manage Stock
+    </a>
+    {% endif %}
+
+    <!-- Upload Products Modal -->
+    {% if user.is_authenticated %}
+    <button class="btn btn-info position-fixed bottom-0 start-0 m-4" data-bs-toggle="modal" data-bs-target="#uploadModal">
+      📤 Upload Products
+    </button>
+
+    <div class="modal fade" id="uploadModal" tabindex="-1" aria-labelledby="uploadModalLabel" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="uploadModalLabel">Upload Products from Excel</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <form id="uploadForm" enctype="multipart/form-data">
+              <label for="excelFile">Select Excel File</label>
+              <input type="file" id="excelFile" name="excel_file" class="form-control" accept=".xlsx" required>
+            </form>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            <button type="button" class="btn btn-success" onclick="uploadProducts()">Upload</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    let cart = {};
+
+    function searchProducts() {
+      const input = document.getElementById("searchInput").value.toLowerCase();
+      const rows = document.getElementById("product-body").getElementsByTagName("tr");
+
+      for (let i = 0; i < rows.length; i++) {
+        const name = rows[i].getElementsByTagName("td")[0].textContent.toLowerCase();
+        rows[i].style.display = name.includes(input) ? "" : "none";
+      }
+    }
+
+    function updatePrice(select, productId) {
+      const row = select.closest("tr");
+      const priceType = select.value;
+      const retail = parseFloat(row.querySelector("td:nth-child(2)").textContent);
+      const wholesale = parseFloat(row.querySelector("td:nth-child(3)").textContent);
+
+      if (cart[productId]) {
+        cart[productId].price = priceType === "retail" ? retail : wholesale;
+        cart[productId].priceType = priceType;
+        updateCartUI();
+      }
+    }
+
+    function addToCart(id, name, retail, wholesale) {
+      const row = event.target.closest("tr");
+      const qty = parseInt(row.querySelector(".qty").value);
+      const priceType = row.querySelector(".price-type").value;
+      const price = priceType === "retail" ? retail : wholesale;
+
+      if (!cart[id]) {
+        cart[id] = { name, qty: 0, retail, wholesale, price, priceType };
+      }
+      cart[id].qty += qty;
+      cart[id].price = price;
+      updateCartUI();
+    }
+
+    function updateCartUI() {
+      const list = document.getElementById("cart-items");
+      list.innerHTML = "";
+      let total = 0;
+      Object.entries(cart).forEach(([id, item]) => {
+        const subtotal = item.qty * item.price;
+        total += subtotal;
+        list.innerHTML += `
+          <li class="list-group-item d-flex justify-content-between align-items-center">
+            ${item.name} x ${item.qty} (${item.priceType}) - ₦${subtotal}
+            <button class="btn btn-danger btn-sm" onclick="removeItem('${id}')">x</button>
+          </li>`;
+      });
+      document.getElementById("cart-total").textContent = total;
+    }
+
+    function removeItem(id) {
+      delete cart[id];
+      updateCartUI();
+    }
+
+    function checkout() {
+      fetch("{% url 'store:checkout' %}", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": "{{ csrf_token }}" },
+        body: JSON.stringify(cart)
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.error) alert(data.error);
+        else {
+          alert("Checkout complete!");
+          cart = {};
+          updateCartUI();
+          location.reload();
+        }
+      })
+      .catch(error => alert("Checkout failed: " + error));
+    }
+
+    function saveStock() {
+      const form = document.getElementById("stockForm");
+      const formData = new FormData(form);
+      const data = Object.fromEntries(formData);
+      
+      if (!data.name || !data.retail_price || !data.wholesale_price || !data.stock) {
+        alert("Please fill out all fields.");
+        return;
+      }
+
+      console.log("Data being sent:", JSON.stringify(data));
+      const jsonBody = JSON.stringify(data);
+      console.log("JSON body being sent:", jsonBody);
+
+      fetch("{% url 'store:manage_stock' %}", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": "{{ csrf_token }}" },
+        body: jsonBody
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.error) alert(data.error);
+        else {
+          alert(data.message);
+          const tbody = document.getElementById("product-body");
+          tbody.innerHTML = '';
+          data.products.forEach(product => {
+            tbody.innerHTML += `
+              <tr {% if product.stock < 10 %}class="low-stock"{% endif %}>
+                <td>${product.name}</td>
+                <td>${product.retail_price}</td>
+                <td>${product.wholesale_price}</td>
+                <td>
+                  <select class="price-type form-control form-control-sm" onchange="updatePrice(this, '${product.id}')">
+                    <option value="retail" selected>Retail</option>
+                    <option value="wholesale">Wholesale</option>
+                  </select>
+                </td>
+                <td><input type="number" min="1" class="form-control form-control-sm qty" value="1"></td>
+                <td>${product.stock}</td>
+                <td>
+                  <button class="btn btn-primary btn-sm" onclick="addToCart('${product.id}', '${product.name}', ${product.retail_price}, ${product.wholesale_price})">+
+                  </button>
+                </td>
+              </tr>`;
+          });
+          bootstrap.Modal.getInstance(document.getElementById('stockModal')).hide();
+          form.reset();
+        }
+      })
+      .catch(error => alert("An error occurred: " + error));
+    }
+
+    function uploadProducts() {
+      const form = document.getElementById("uploadForm");
+      const formData = new FormData(form);
+
+      fetch("{% url 'store:upload_products' %}", {
+        method: "POST",
+        headers: { "X-CSRFToken": "{{ csrf_token }}" },
+        body: formData
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.error) alert(data.error);
+        else {
+          alert(data.message);
+          const tbody = document.getElementById("product-body");
+          tbody.innerHTML = '';
+          data.products.forEach(product => {
+            tbody.innerHTML += `
+              <tr {% if product.stock < 10 %}class="low-stock"{% endif %}>
+                <td>${product.name}</td>
+                <td>${product.retail_price}</td>
+                <td>${product.wholesale_price}</td>
+                <td>
+                  <select class="price-type form-control form-control-sm" onchange="updatePrice(this, '${product.id}')">
+                    <option value="retail" selected>Retail</option>
+                    <option value="wholesale">Wholesale</option>
+                  </select>
+                </td>
+                <td><input type="number" min="1" class="form-control form-control-sm qty" value="1"></td>
+                <td>${product.stock}</td>
+                <td>
+                  <button class="btn btn-primary btn-sm" onclick="addToCart('${product.id}', '${product.name}', ${product.retail_price}, ${product.wholesale_price})">+
+                  </button>
+                </td>
+              </tr>`;
+          });
+          bootstrap.Modal.getInstance(document.getElementById('uploadModal')).hide();
+        }
+      })
+      .catch(error => alert("An error occurred: " + error));
+    }
+  </script>
+</body>
+</html>
